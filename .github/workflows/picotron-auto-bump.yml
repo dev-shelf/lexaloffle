@@ -9,6 +9,7 @@ on:
 jobs:
   bump:
     runs-on: ubuntu-latest
+    environment: automation
     permissions:
       contents: write
       issues: write
