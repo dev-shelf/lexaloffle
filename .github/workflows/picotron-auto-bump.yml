@@ -1,0 +1,229 @@
+name: Picotron auto bump
+
+on:
+  schedule:
+    # Runs weekly; the job gates itself to even ISO weeks for a biweekly cadence.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check biweekly cadence
+        id: cadence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          week="$(date -u +%V)"
+          if (( 10#$week % 2 == 0 )); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip off-week run
+        if: steps.cadence.outputs.run != 'true'
+        run: echo "Skipping this week to keep a biweekly schedule."
+
+      - name: Check livecheck
+        if: steps.cadence.outputs.run == 'true'
+        id: livecheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          json="$(brew livecheck --json --quiet --cask ./Casks/picotron.rb)"
+
+          current="$(echo "$json" | jq -r '.[0].version.current')"
+          latest="$(echo "$json" | jq -r '.[0].version.latest')"
+          outdated="$(echo "$json" | jq -r '.[0].version.outdated')"
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "outdated=$outdated" >> "$GITHUB_OUTPUT"
+
+      - name: Check required secrets
+        if: steps.cadence.outputs.run == 'true'
+        id: secrets
+        shell: bash
+        env:
+          HOMEBREW_LEXALOFFLE_EMAIL: ${{ secrets.HOMEBREW_LEXALOFFLE_EMAIL }}
+          HOMEBREW_PICOTRON_URL_TOKEN: ${{ secrets.HOMEBREW_PICOTRON_URL_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${HOMEBREW_LEXALOFFLE_EMAIL:-}" && -n "${HOMEBREW_PICOTRON_URL_TOKEN:-}" ]]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open issue when required secrets are missing
+        if: steps.cadence.outputs.run == 'true' && steps.secrets.outputs.has_secrets != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueTitle = "CI: missing secrets for Picotron auto bump";
+            const { owner, repo } = context.repo;
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existing = openIssues.find((i) => i.title === issueTitle);
+            if (existing) {
+              core.info(`Issue already open: #${existing.number}`);
+              return;
+            }
+
+            const latest = "${{ steps.livecheck.outputs.latest }}" || "unknown";
+            const current = "${{ steps.livecheck.outputs.current }}" || "unknown";
+            const outdated = "${{ steps.livecheck.outputs.outdated }}" || "unknown";
+
+            const body = [
+              "The scheduled Picotron auto-bump workflow is missing required repository secrets.",
+              "",
+              "Required secrets:",
+              "- `HOMEBREW_LEXALOFFLE_EMAIL`",
+              "- `HOMEBREW_PICOTRON_URL_TOKEN`",
+              "",
+              `Livecheck status: current=${current}, latest=${latest}, outdated=${outdated}`,
+              "",
+              "After adding secrets, you can re-run the workflow manually using `workflow_dispatch`.",
+            ].join("\n");
+
+            await github.rest.issues.create({
+              owner,
+              repo,
+              title: issueTitle,
+              body,
+            });
+
+      - name: Close missing-secrets issue when secrets are configured
+        if: steps.cadence.outputs.run == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueTitle = "CI: missing secrets for Picotron auto bump";
+            const { owner, repo } = context.repo;
+
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existing = openIssues.find((i) => i.title === issueTitle);
+            if (!existing) {
+              core.info("No open missing-secrets issue to close.");
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: existing.number,
+              body: "Secrets are now configured; auto-bump workflow resumed.",
+            });
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: existing.number,
+              state: "closed",
+            });
+
+      - name: Stop when no update is available
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated != 'true'
+        run: echo "Picotron is already up to date."
+
+      - name: Download archive and compute sha256
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        id: checksum
+        shell: bash
+        env:
+          HOMEBREW_LEXALOFFLE_EMAIL: ${{ secrets.HOMEBREW_LEXALOFFLE_EMAIL }}
+          HOMEBREW_PICOTRON_URL_TOKEN: ${{ secrets.HOMEBREW_PICOTRON_URL_TOKEN }}
+          LATEST_VERSION: ${{ steps.livecheck.outputs.latest }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HOMEBREW_LEXALOFFLE_EMAIL:-}" || -z "${HOMEBREW_PICOTRON_URL_TOKEN:-}" ]]; then
+            echo "Required secrets are missing." >&2
+            exit 1
+          fi
+
+          url="https://www.lexaloffle.com/dl/user/${HOMEBREW_LEXALOFFLE_EMAIL}/${HOMEBREW_PICOTRON_URL_TOKEN}/picotron_${LATEST_VERSION}_osx.zip"
+          archive="/tmp/picotron_${LATEST_VERSION}_osx.zip"
+
+          curl -fL "$url" -o "$archive"
+          sha="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Update cask file
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        shell: bash
+        env:
+          LATEST_VERSION: ${{ steps.livecheck.outputs.latest }}
+          NEW_SHA256: ${{ steps.checksum.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          ruby <<'RUBY'
+          path = "Casks/picotron.rb"
+          text = File.read(path)
+
+          unless text.sub!(/version\s+"[^"]+"/, "version \"#{ENV.fetch("LATEST_VERSION")}\"")
+            abort "Unable to update version stanza"
+          end
+
+          unless text.sub!(/sha256\s+"[0-9a-f]{64}"/, "sha256 \"#{ENV.fetch("NEW_SHA256")}\"")
+            abort "Unable to update sha256 stanza"
+          end
+
+          File.write(path, text)
+          RUBY
+
+      - name: Audit updated cask
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        run: brew audit --cask --strict ./Casks/picotron.rb
+
+      - name: Create pull request
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/picotron-bump-${{ steps.livecheck.outputs.latest }}
+          delete-branch: true
+          commit-message: "chore: bump picotron to ${{ steps.livecheck.outputs.latest }}"
+          title: "chore: bump picotron to ${{ steps.livecheck.outputs.latest }}"
+          body: |
+            Automated Picotron cask bump.
+
+            - Current version: `${{ steps.livecheck.outputs.current }}`
+            - Latest version: `${{ steps.livecheck.outputs.latest }}`
+            - Updated file: `Casks/picotron.rb`
+
+            Generated by `.github/workflows/picotron-auto-bump.yml`.
