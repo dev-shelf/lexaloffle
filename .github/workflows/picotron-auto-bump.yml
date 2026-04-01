@@ -24,6 +24,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Tap repository
+        run: brew tap "$GITHUB_REPOSITORY" "$GITHUB_WORKSPACE"
+
       - name: Check biweekly cadence
         id: cadence
         shell: bash
@@ -52,7 +55,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          json="$(brew livecheck --json --quiet --cask ./Casks/picotron.rb)"
+          cask_ref="$GITHUB_REPOSITORY/picotron"
+          json="$(brew livecheck --json --quiet --cask "$cask_ref")"
 
           current="$(echo "$json" | jq -r '.[0].version.current')"
           latest="$(echo "$json" | jq -r '.[0].version.latest')"
@@ -209,7 +213,7 @@ jobs:
 
       - name: Audit updated cask
         if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
-        run: brew audit --cask --strict ./Casks/picotron.rb
+        run: brew audit --cask --strict "$GITHUB_REPOSITORY/picotron"
 
       - name: Create pull request
         if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
