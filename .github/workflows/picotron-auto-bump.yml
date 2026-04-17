@@ -258,6 +258,7 @@ jobs:
 
           git commit -m "chore: bump picotron to ${{ steps.livecheck.outputs.latest }}"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin "$BRANCH_NAME" 2>/dev/null || true
           git push --force-with-lease origin "$BRANCH_NAME"
 
           pr_number="$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number // empty')"
