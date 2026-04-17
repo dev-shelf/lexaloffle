@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@main
@@ -214,6 +216,10 @@ jobs:
       - name: Audit updated cask
         if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
         run: brew audit --cask --strict "$GITHUB_REPOSITORY/picotron"
+
+      - name: Clear leftover git auth header
+        if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
+        run: git config --local --unset-all http.https://github.com/.extraheader || true
 
       - name: Create pull request
         if: steps.cadence.outputs.run == 'true' && steps.livecheck.outputs.outdated == 'true' && steps.secrets.outputs.has_secrets == 'true'
