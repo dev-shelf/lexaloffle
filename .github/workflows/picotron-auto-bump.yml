@@ -21,13 +21,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@main
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Homebrew
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v brew >/dev/null 2>&1; then
+            NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          fi
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null || /opt/homebrew/bin/brew shellenv 2>/dev/null || brew shellenv)"
+          echo "HOMEBREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          brew --version
 
       - name: Tap repository
-        run: brew tap "$GITHUB_REPOSITORY" "$GITHUB_WORKSPACE"
+        shell: bash
+        run: |
+          set -euo pipefail
+          eval "$(brew shellenv)"
+          brew tap "$GITHUB_REPOSITORY" "$GITHUB_WORKSPACE"
 
       - name: Check biweekly cadence
         id: cadence
