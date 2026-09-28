@@ -7,7 +7,7 @@ cask "picotron" do
     end
   end
 
-  version "0.3.0c"
+  version "0.3.0d"
   sha256 "ac1d728c62e8566024996847996c4fb5ac469cf801f6b936de1bf6ca9ecf8618"
 
   url "https://www.lexaloffle.com/dl/user/#{Utils.lexaloffle_param("HOMEBREW_LEXALOFFLE_EMAIL")}/#{Utils.lexaloffle_param("HOMEBREW_PICOTRON_URL_TOKEN")}/picotron_#{version}_osx.zip"
